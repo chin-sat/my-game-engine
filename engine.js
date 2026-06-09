@@ -1,100 +1,137 @@
+// ============================================================================
+// CORE FRAMEWORK ENGINE: DO NOT ALTER FOR SPECIFIC GAMES
+// ============================================================================
+
+class InputHandler {
+    constructor(engine) {
+        this.engine = engine;
+        this.keys = {};
+        this.mouse = { x: 0, y: 0, isDown: false, clicked: false };
+        this.initListeners();
+    }
+    initListeners() {
+        window.addEventListener('keydown', (e) => {
+            this.keys[e.code] = true;
+            if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+        });
+        window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
+        window.addEventListener('mousemove', (e) => { this.updateMousePosition(e.clientX, e.clientY); });
+        window.addEventListener('mousedown', () => { this.mouse.isDown = true; this.mouse.clicked = true; });
+        window.addEventListener('mouseup', () => { this.mouse.isDown = false; });
+        window.addEventListener('touchstart', (e) => {
+            if (e.touches.length > 0) {
+                this.mouse.isDown = true; this.mouse.clicked = true;
+                this.updateMousePosition(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches.length > 0) this.updateMousePosition(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: false });
+        window.addEventListener('touchend', () => { this.mouse.isDown = false; });
+    }
+    updateMousePosition(clientX, clientY) {
+        const rect = this.engine.canvas.getBoundingClientRect();
+        const rawX = (clientX - rect.left) / this.engine.scale;
+        const rawY = (clientY - rect.top) / this.engine.scale;
+        this.mouse.x = Math.max(0, Math.min(this.engine.virtualWidth, rawX));
+        this.mouse.y = Math.max(0, Math.min(this.engine.virtualHeight, rawY));
+    }
+    isPressed(keyCode) { return !!this.keys[keyCode]; }
+    resetTicks() { this.mouse.clicked = false; }
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x; this.y = y; this.color = color;
+        this.size = Math.random() * 6 + 4;
+        this.vx = (Math.random() - 0.5) * 300; this.vy = (Math.random() - 0.5) * 300;
+        this.alpha = 1; this.decay = Math.random() * 0.8 + 0.6;
+    }
+    update(dt) { this.x += this.vx * dt; this.y += this.vy * dt; this.alpha -= this.decay * dt; }
+    render(ctx) {
+        ctx.save(); ctx.globalAlpha = Math.max(0, this.alpha); ctx.fillStyle = this.color;
+        ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size); ctx.restore();
+    }
+}
+
+class AudioManager {
+    constructor() { this.ctx = null; }
+    init() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+    playBlip() {
+        this.init(); if (!this.ctx) return;
+        const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+        osc.type = 'square'; osc.frequency.setValueAtTime(400, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1200, this.ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.1, this.ctx.currentTime); gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 0.1);
+    }
+    playExplosion() {
+        this.init(); if (!this.ctx) return;
+        const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(40, this.ctx.currentTime + 0.4);
+        gain.gain.setValueAtTime(0.2, this.ctx.currentTime); gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.4);
+        osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 0.4);
+    }
+}
+
+// Global Core Framework Instance
 class GameEngine {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
-        
-        // Base virtual resolution (independent of screen size)
-        this.virtualWidth = 800;
-        this.virtualHeight = 600;
-        
-        // Scaling factors
-        this.scale = 1;
-        
-        // Game Loop Variables
-        this.lastTime = 0;
-        this.fps = 0;
-
-        // Initialize systems
+        this.virtualWidth = 800; this.virtualHeight = 600;
+        this.scale = 1; this.lastTime = 0; this.fps = 0;
+        this.particles = [];
+        this.input = new InputHandler(this);
+        this.audio = new AudioManager();
+        this.activeGame = null; // Container hook for runtime custom games
         this.initResize();
-        this.startLoop();
     }
-
-    // Module 1A: Smart Scaling Engine
     initResize() {
         const resize = () => {
-            const windowWidth = window.innerWidth;
-            const windowHeight = window.innerHeight;
-            
-            // Calculate best fit ratio (maintains 4:3 aspect ratio)
-            const scaleX = windowWidth / this.virtualWidth;
-            const scaleY = windowHeight / this.virtualHeight;
+            const scaleX = window.innerWidth / this.virtualWidth;
+            const scaleY = window.innerHeight / this.virtualHeight;
             this.scale = Math.min(scaleX, scaleY);
-            
-            // Set actual screen dimensions
-            this.canvas.width = this.virtualWidth * this.scale;
-            this.canvas.height = this.virtualHeight * this.scale;
-            
-            // Turn off image smoothing for crisp retro/arcade pixel art
+            this.canvas.width = this.virtualWidth * this.scale; this.canvas.height = this.virtualHeight * this.scale;
             this.ctx.imageSmoothingEnabled = false;
         };
-
-        window.addEventListener('resize', resize);
-        resize(); // Run immediately on load
+        window.addEventListener('resize', resize); resize();
     }
-
-    // Module 1B: Delta-Time Game Loop (Stops 144Hz screen lag/speedups)
+    loadGame(gameInstance) {
+        this.activeGame = gameInstance;
+        this.activeGame.engine = this; // Give the game a callback reference hook
+        this.activeGame.init();
+        this.startLoop();
+    }
+    createExplosion(x, y, color, count = 20) {
+        for (let i = 0; i < count; i++) this.particles.push(new Particle(x, y, color));
+    }
     startLoop() {
         const loop = (timestamp) => {
             if (!this.lastTime) this.lastTime = timestamp;
+            let dt = (timestamp - this.lastTime) / 1000; this.lastTime = timestamp;
+            if (dt > 0.1) dt = 0.1; this.fps = Math.round(1 / dt);
+
+            // Update Global particles
+            for (let i = this.particles.length - 1; i >= 0; i--) {
+                this.particles[i].update(dt); if (this.particles[i].alpha <= 0) this.particles.splice(i, 1);
+            }
+
+            // Route execution lifecycle parameters straight to active client game logic
+            if (this.activeGame) this.activeGame.update(dt);
             
-            // Calculate delta time in seconds
-            let dt = (timestamp - this.lastTime) / 1000;
-            this.lastTime = timestamp;
+            // Core render pass pipelines
+            this.ctx.fillStyle = '#0f0f13'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.save(); this.ctx.scale(this.scale, this.scale);
+            
+            for (let particle of this.particles) { particle.render(this.ctx); }
+            if (this.activeGame) this.activeGame.render(this.ctx);
 
-            // Cap dt to prevent massive jumps during lag spikes
-            if (dt > 0.1) dt = 0.1;
-
-            // Calculate current FPS
-            this.fps = Math.round(1 / dt);
-
-            this.update(dt);
-            this.render();
-
+            this.ctx.restore();
+            this.input.resetTicks();
             requestAnimationFrame(loop);
         };
         requestAnimationFrame(loop);
     }
-
-    // Game logic goes here (to be overridden by your specific game)
-    update(dt) {
-        // Core systems update will plug in here
-    }
-
-    // Graphics drawing goes here
-    render() {
-        // 1. Clear screen
-        this.ctx.fillStyle = '#222';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-        // 2. Save canvas state and apply global scaling matrix
-        this.ctx.save();
-        this.ctx.scale(this.scale, this.scale);
-
-        // --- DRAW YOUR VIRTUAL WORLD GAME OBJECTS HERE (0 to 800 width, 0 to 600 height) ---
-        // Placeholder test square to prove scaling works:
-        this.ctx.fillStyle = '#00ffcc';
-        this.ctx.fillRect(50, 50, 100, 100);
-
-        // Draw Debug FPS text
-        this.ctx.fillStyle = '#fff';
-        this.ctx.font = '20px monospace';
-        this.ctx.fillText(`FPS: ${this.fps}`, 50, 180);
-        // ---------------------------------------------------------------------------------
-
-        // 3. Restore canvas scale for the next frame loop
-        this.ctx.restore();
-    }
 }
-
-// Instantiate the engine to run it
-const game = new GameEngine();
