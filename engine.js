@@ -1,5 +1,5 @@
 // ============================================================================
-// CORE FRAMEWORK ENGINE: DO NOT ALTER FOR SPECIFIC GAMES
+// CORE FRAMEWORK ENGINE: REUSABLE ASSET (FIXED CLASS METHODS)
 // ============================================================================
 
 class InputHandler {
@@ -21,11 +21,11 @@ class InputHandler {
         window.addEventListener('touchstart', (e) => {
             if (e.touches.length > 0) {
                 this.mouse.isDown = true; this.mouse.clicked = true;
-                this.updateMousePosition(e.touches[0].clientX, e.touches[0].clientY);
+                this.updateMousePosition(e.touches.clientX, e.touches.clientY);
             }
         }, { passive: false });
         window.addEventListener('touchmove', (e) => {
-            if (e.touches.length > 0) this.updateMousePosition(e.touches[0].clientX, e.touches[0].clientY);
+            if (e.touches.length > 0) this.updateMousePosition(e.touches.clientX, e.touches.clientY);
         }, { passive: false });
         window.addEventListener('touchend', () => { this.mouse.isDown = false; });
     }
@@ -75,7 +75,6 @@ class AudioManager {
     }
 }
 
-// Global Core Framework Instance
 class GameEngine {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
@@ -85,9 +84,28 @@ class GameEngine {
         this.particles = [];
         this.input = new InputHandler(this);
         this.audio = new AudioManager();
-        this.activeGame = null; // Container hook for runtime custom games
+        this.activeGame = null; 
         this.initResize();
     }
+    
+    // --- PERSISTENT CONTEXT API CORES ---
+    saveData(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (e) {
+            console.error("Storage Error", e);
+        }
+    }
+
+    loadData(key, defaultValue = null) {
+        try {
+            const item = localStorage.getItem(key);
+            return item ? JSON.parse(item) : defaultValue;
+        } catch (e) {
+            return defaultValue;
+        }
+    }
+
     initResize() {
         const resize = () => {
             const scaleX = window.innerWidth / this.virtualWidth;
@@ -100,7 +118,7 @@ class GameEngine {
     }
     loadGame(gameInstance) {
         this.activeGame = gameInstance;
-        this.activeGame.engine = this; // Give the game a callback reference hook
+        this.activeGame.engine = this; 
         this.activeGame.init();
         this.startLoop();
     }
@@ -113,15 +131,12 @@ class GameEngine {
             let dt = (timestamp - this.lastTime) / 1000; this.lastTime = timestamp;
             if (dt > 0.1) dt = 0.1; this.fps = Math.round(1 / dt);
 
-            // Update Global particles
             for (let i = this.particles.length - 1; i >= 0; i--) {
                 this.particles[i].update(dt); if (this.particles[i].alpha <= 0) this.particles.splice(i, 1);
             }
 
-            // Route execution lifecycle parameters straight to active client game logic
             if (this.activeGame) this.activeGame.update(dt);
             
-            // Core render pass pipelines
             this.ctx.fillStyle = '#0f0f13'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             this.ctx.save(); this.ctx.scale(this.scale, this.scale);
             
